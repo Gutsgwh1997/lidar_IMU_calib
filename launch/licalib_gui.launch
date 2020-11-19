@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <launch>
     <arg name="topic_imu"           default="/imu1/raw/data_withSync" />
+    <arg name="topic_lidar"         default="/rslidar_32" />
     <arg name="path_bag"            default="/home/$(env USER)/rosbag/VLP_16/Garage-01.bag" />
     <arg name="bag_start"           default="1" />
     <arg name="bag_durr"            default="30" />
@@ -15,7 +16,7 @@
     <!-- <node pkg="li_calib" type="li_calib_gui" name="li_calib_gui" output="screen" clear_params="true" launch-prefix="gdb -ex run &#45;&#45;args">-->
 
         <param name="topic_imu"         type="string"   value="$(arg topic_imu)" />
-        <param name="topic_lidar"       type="string"   value="/velodyne_packets" />
+        <param name="topic_lidar"       type="string"   value="$(arg topic_lidar)" />
         <param name="LidarModel"        type="string"   value="$(arg lidar_model)" />
         <param name="path_bag"          type="string"   value="$(arg path_bag)" />
         <param name="bag_start"         type="double"   value="$(arg bag_start)" />

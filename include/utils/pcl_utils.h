@@ -43,6 +43,15 @@ struct PointXYZIT {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW // make sure our new allocators are aligned
 } EIGEN_ALIGN16;
 
+struct PointXYZIRT {
+    PCL_ADD_POINT4D
+    PCL_ADD_INTENSITY;
+    std::uint16_t ring;
+    double timestamp;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+
+
 inline void downsampleCloud(pcl::PointCloud<pcl::PointXYZI>::Ptr in_cloud,
                             pcl::PointCloud<pcl::PointXYZI>::Ptr out_cloud,
                             float in_leaf_size) {
@@ -60,6 +69,12 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(licalib::PointXYZIT,
                                   (float, z, z)
                                   (float, intensity, intensity)
                                   (double, timestamp, timestamp))
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(licalib::PointXYZIRT, 
+                                 (float, x, x)(float, y, y)(float, z, z)
+                                 (float, intensity, intensity)
+                                 (std::uint16_t, ring, ring)
+                                 (double, timestamp, timestamp))
 
 typedef licalib::PointXYZIT TPoint;
 typedef pcl::PointCloud<TPoint> TPointCloud;

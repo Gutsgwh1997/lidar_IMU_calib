@@ -45,8 +45,11 @@ class TrajectoryManager {
   using IMUSensor = kontiki::sensors::ConstantBiasImu;
   using LiDARSensor = kontiki::sensors::VLP16LiDAR;
 
+  // A spline with control points in SO(3). Control points are unit quaternions q=(w, x, y, z).
   using SO3TrajEstimator   = kontiki::TrajectoryEstimator<kontiki::trajectories::UniformSO3SplineTrajectory>;
+  // A spline with control points in R3. Control points are vectors in R3.
   using R3TrajEstimator    = kontiki::TrajectoryEstimator<kontiki::trajectories::UniformR3SplineTrajectory>;
+  // Split interpolation trajectory. This trajectory is implemented using two splines: one in R3 and one in SO3.
   using SplitTrajEstimator = kontiki::TrajectoryEstimator<kontiki::trajectories::SplitTrajectory>;
 
   using GyroMeasurement    = kontiki::measurements::GyroscopeMeasurement<IMUSensor>;
@@ -69,7 +72,8 @@ public:
             lidar_(std::make_shared<LiDARSensor>()),
             calib_param_manager(std::make_shared<CalibParamManager>()) {
     assert(knot_distance > 0 && "knot_distance should be lager than 0");
-
+    
+    // 这个start_time是adjustDataset()函数之后的(scan_0的时间戳)
     double traj_start_time = start_time - time_offset_padding;
     double traj_end_time = end_time + time_offset_padding;
     traj_ = std::make_shared<kontiki::trajectories::SplitTrajectory>
@@ -130,16 +134,19 @@ private:
 
   double map_time_;
   double time_offset_padding_;
+  // cubic B-splines,quaternion and translation
   std::shared_ptr<kontiki::trajectories::SplitTrajectory> traj_;
   std::shared_ptr<kontiki::sensors::ConstantBiasImu> imu_;
   std::shared_ptr<kontiki::sensors::VLP16LiDAR> lidar_;
-
+  
+  // 参数配置文件 
   CalibParamManager::Ptr calib_param_manager;
 
   std::vector<IO::IMUData> imu_data_;
 
   Eigen::aligned_vector<Eigen::Vector3d> closest_point_vec_;
-
+  
+  // Measurement缓存
   std::vector< std::shared_ptr<GyroMeasurement>>  gyro_list_;
   std::vector< std::shared_ptr<AccelMeasurement>> accel_list_;
   std::vector< std::shared_ptr<SurfMeasurement>>  surfelpoint_list_;

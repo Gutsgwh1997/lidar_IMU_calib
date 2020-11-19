@@ -53,8 +53,8 @@ public:
 
 
 private:
-  bool rotaion_initialized_;
-  Eigen::Quaterniond q_ItoS_est_;
+  bool rotaion_initialized_;                    /// 初始化成功的标志位
+  Eigen::Quaterniond q_ItoS_est_;               /// 估计出来的IMU到Lidar的旋转
 
 };
 

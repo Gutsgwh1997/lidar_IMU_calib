@@ -18,6 +18,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "utils/dataset_reader.h"
+#include <cmath>
 #include <ui/calib_helper.h>
 #include <core/scan_undistortion.h>
 #include <utils/tic_toc.h>
@@ -28,11 +30,12 @@
 
 namespace licalib {
 
+// 系统运行最先调用的函数
 CalibrHelper::CalibrHelper(ros::NodeHandle& nh)
-        : calib_step_(Start),
+        : calib_step_(Start),                        // 只是一个状态机，用来说明当期算法的状态
           iteration_step_(0),
           opt_time_offset_(false),
-          plane_lambda_(0.6),
+          plane_lambda_(0.6),                        // 论文中平面拟合的阈值（与二阶矩矩阵的特征值确定）
           ndt_resolution_(0.5),
           associated_radius_(0.05) {
   std::string topic_lidar;
@@ -51,28 +54,37 @@ CalibrHelper::CalibrHelper(ros::NodeHandle& nh)
   nh.param<double>("time_offset_padding", time_offset_padding, 0.015);
   nh.param<double>("knot_distance", knot_distance, 0.02);
 
+  //* 1.创建结果保存的目录
   if (!createCacheFolder(bag_path_)) {
     calib_step_ = Error;
+    std::cout << "Could not create cache folder!" << std::endl;
+    exit(-1);
   }
 
+  //* 2.read dataset and adjustDataset
   {
     std::string lidar_model;
     nh.param<std::string>("LidarModel", lidar_model, "VLP_16");
     IO::LidarModelType lidar_model_type = IO::LidarModelType::VLP_16;
     if (lidar_model == "VLP_16") {
-      lidar_model_type = IO::LidarModelType::VLP_16;
+        lidar_model_type = IO::LidarModelType::VLP_16;
+    } else if (lidar_model == "RS_LIDAR") {
+        lidar_model_type = IO::LidarModelType::RS_LIDAR;
     } else {
-      calib_step_ = Error;
-      ROS_WARN("LiDAR model %s not support yet.", lidar_model.c_str());
+        calib_step_ = Error;
+        ROS_WARN("LiDAR model %s not support yet.", lidar_model.c_str());
+        exit(-1);
     }
-    /// read dataset
     std::cout << "\nLoad dataset from " << bag_path_ << std::endl;
     IO::LioDataset lio_dataset_temp(lidar_model_type);
     lio_dataset_temp.read(bag_path_, topic_imu_, topic_lidar, bag_start, bag_durr);
     dataset_reader_ = lio_dataset_temp.get_data();
     dataset_reader_->adjustDataset();
+
+    // DebugPointCloud();
   }
 
+  //* 3.初始化一些基础功能类
   map_time_ = dataset_reader_->get_start_time();
   scan4map_time_ = map_time_ + scan4map;
   double end_time = dataset_reader_->get_end_time();
@@ -91,39 +103,40 @@ CalibrHelper::CalibrHelper(ros::NodeHandle& nh)
           associated_radius_, plane_lambda_);
 }
 
-bool CalibrHelper::createCacheFolder(const std::string& bag_path) {
-  boost::filesystem::path p(bag_path);
-  if (p.extension() != ".bag") {
-    return false;
-  }
-  cache_path_ = p.parent_path().string() + "/" + p.stem().string();
-  boost::filesystem::create_directory(cache_path_);
-  return true;
-}
-
+/**
+ * @brief 初始化部分，使用旋转项相同去得到外参中旋转项的初始值
+ */
 void CalibrHelper::Initialization() {
   if (Start != calib_step_) {
     ROS_WARN("[Initialization] Need status: Start.");
     return;
   }
+
+  // 将IMU数据全部喂给B 样条曲线
   for (const auto& imu_data: dataset_reader_->get_imu_data()) {
     traj_manager_->feedIMUData(imu_data);
   }
+  // 将IMU观测添加为约束，B样条插值旋转项的轨迹 
   traj_manager_->initialSO3TrajWithGyro();
 
+  // lidar数据每次喂10帧，直到初始化成功
   for(const TPointCloud& raw_scan: dataset_reader_->get_scan_data()) {
+    // 这个cloud是PointXYZI类型的
     VPointCloud::Ptr cloud(new VPointCloud);
+    // 将PointXYZIT类型转换为PointXYZI类型
     TPointCloud2VPointCloud(raw_scan.makeShared(), cloud);
-    double scan_timestamp = pcl_conversions::fromPCL(raw_scan.header.stamp).toSec();
 
+    double scan_timestamp = pcl_conversions::fromPCL(raw_scan.header.stamp).toSec();
+    // feed数据的过程就会调用NDT配准，获得当前帧点云相对于初始帧的位姿(这一结果保存在lidar_odom_类中)
     lidar_odom_->feedScan(scan_timestamp, cloud);
 
-    if (lidar_odom_->get_odom_data().size() < 30
-        || (lidar_odom_->get_odom_data().size() % 10 != 0))
+    // 先喂30帧lidar数据，若rotation_initializer_初始化失败再喂10帧lidar进去
+    if (lidar_odom_->get_odom_data().size() < 30 || (lidar_odom_->get_odom_data().size() % 10 != 0))
       continue;
-    if (rotation_initializer_->EstimateRotation(traj_manager_,
-                                                lidar_odom_->get_odom_data())) {
+    if (rotation_initializer_->EstimateRotation(traj_manager_, lidar_odom_->get_odom_data())) {
+      // 初始化出来的外参旋转是Imu_2_Lidar
       Eigen::Quaterniond qItoLidar = rotation_initializer_->getQ_ItoS();
+      // 将估计出来的初始外参写进配置文件类
       traj_manager_->getCalibParamManager()->set_q_LtoI(qItoLidar.conjugate());
 
       Eigen::Vector3d euler_ItoL = qItoLidar.toRotationMatrix().eulerAngles(0,1,2);
@@ -137,8 +150,11 @@ void CalibrHelper::Initialization() {
     ROS_WARN("[Initialization] fails.");
 }
 
+/**
+ * @brief Lidar数据关联部分
+ */
 void CalibrHelper::DataAssociation() {
-  std::cout << "[Association] start ...." << std::endl;
+  std::cout << "[Data Association] start ...." << std::endl;
   TicToc timer;
   timer.tic();
 
@@ -223,6 +239,7 @@ void CalibrHelper::Refinement() {
 
 void CalibrHelper::Mapping(bool relocalization) {
   bool update_map = true;
+  // 未使用到重定位模式
   if (relocalization) {
     lidar_odom_->clearOdomData();
     update_map = false;
@@ -295,4 +312,53 @@ void CalibrHelper::saveMap() const {
   }
 }
 
+/**
+ * @brief 创建存放结果的文件路径
+ *
+ * @param bag_path bag文件的路径
+ *
+ * @return 在bag包所在的目录下创建一个与bag包同名的文件夹
+ */
+bool CalibrHelper::createCacheFolder(const std::string& bag_path) {
+  boost::filesystem::path p(bag_path);
+  if (p.extension() != ".bag") {
+    return false;
+  }
+  cache_path_ = p.parent_path().string() + "/" + p.stem().string();
+  boost::filesystem::create_directory(cache_path_);
+  return true;
 }
+
+/**
+ * @brief 测试点云存储分布的函数
+ */
+void CalibrHelper::DebugPointCloud() {
+    const Eigen::aligned_vector<TPointCloud>& rawPointClouds = dataset_reader_->get_scan_data();
+    if (rawPointClouds.size() == 0) {
+        std::cout << "还没获取到数据!" << std::endl;
+    } else {
+        const TPointCloud& rawPointCloud = rawPointClouds[0];
+        int width = rawPointCloud.width;
+        int height = rawPointCloud.height;
+        for (int w = 0; w < width; ++w) {
+            for (int h = 0; h < height; ++h) {
+                float x = rawPointCloud.at(w, h).x;
+                float y = rawPointCloud.at(w, h).y;
+                float z = rawPointCloud.at(w, h).z;
+                float intensity = rawPointCloud.at(w, h).intensity;
+
+                double time = rawPointCloud.at(w, h).timestamp;
+
+                double xoy = std::sqrt(x * x + y * y);
+                double angle = std::atan2(z, xoy) * 180 / M_PI;
+
+                if (h == 0) {
+                    std::cout << angle << " ";
+                }
+            }
+        }
+    }
+    exit(-1);
+}
+
+} // namespace licalib

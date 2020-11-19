@@ -23,13 +23,22 @@
 
 namespace licalib {
 
+/**
+ * @brief Initialization of Extrinsic Rotation, formula(10)
+ * 
+ * @param traj_manager 根据IMU的测量拟合出来的B样条轨迹
+ * @param odom_data NDT配准获得的lidar点云位姿态(带有时间戳)
+ * @return true 初始化成功
+ * @return false 初始化失败
+ */
 bool InertialInitializer::EstimateRotation(
         TrajectoryManager::Ptr traj_manager,
         const Eigen::aligned_vector<LiDAROdometry::OdomData>& odom_data) {
-
+  
+  // 使用B样条插值旋转项
   int flags = kontiki::trajectories::EvalOrientation;
-  std::shared_ptr<kontiki::trajectories::SplitTrajectory> p_traj
-          = traj_manager->getTrajectory();
+  // Access the trajectory
+  std::shared_ptr<kontiki::trajectories::SplitTrajectory> p_traj = traj_manager->getTrajectory();
 
   Eigen::aligned_vector<Eigen::Matrix4d> A_vec;
   for (size_t j = 1; j < odom_data.size(); ++j) {
@@ -38,16 +47,21 @@ bool InertialInitializer::EstimateRotation(
     double tj = odom_data.at(j).timestamp;
     if (tj >= p_traj->MaxTime())
       break;
+
+    // 1.使用B样条插值出来的lidar时刻IMU的旋转(auto推断的类型是kontiki的自定义类)
     auto result_i = p_traj->Evaluate(ti, flags);
     auto result_j = p_traj->Evaluate(tj, flags);
+    // 如果是单位四元数，四元数的共轭就是其逆(q_j^i)
     Eigen::Quaterniond delta_qij_imu = result_i->orientation.conjugate()
                                        * result_j->orientation;
-
+    
+    // 2.lidar的NDT获得的lidar时刻的lidar的旋转
     Eigen::Matrix3d R_Si_toS0 = odom_data.at(i).pose.topLeftCorner<3,3>();
     Eigen::Matrix3d R_Sj_toS0 = odom_data.at(j).pose.topLeftCorner<3,3>();
     Eigen::Matrix3d delta_ij_sensor = R_Si_toS0.transpose() * R_Sj_toS0;
     Eigen::Quaterniond delta_qij_sensor(delta_ij_sensor);
 
+    // 3.加入鲁棒核函数
     Eigen::AngleAxisd R_vector1(delta_qij_sensor.toRotationMatrix());
     Eigen::AngleAxisd R_vector2(delta_qij_imu.toRotationMatrix());
     double delta_angle = 180 / M_PI * std::fabs(R_vector1.angle() - R_vector2.angle());
@@ -57,21 +71,28 @@ bool InertialInitializer::EstimateRotation(
     Eigen::Matrix4d rq_mat = mathutils::RightQuatMatrix(delta_qij_imu);
     A_vec.push_back(huber * (lq_mat - rq_mat));
   }
+  // 不能少于16帧lidar数据
   size_t valid_size = A_vec.size();
   if (valid_size < 15) {
     return false;
   }
+
+  // 构造约束矩阵A，使用SVD分解的方式求解
   Eigen::MatrixXd A(valid_size * 4, 4);
   for (size_t i = 0; i < valid_size; ++i)
     A.block<4, 4>(i * 4, 0) = A_vec.at(i);
 
   Eigen::JacobiSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
-
+  // 这里的解是IMU到Lidar的旋转四元数，tmd就不能和文章里保持一致?
   Eigen::Matrix<double, 4, 1> x = svd.matrixV().col(3);
   Eigen::Quaterniond q_ItoS_est(x);
   Eigen::Vector4d cov = svd.singularValues();
-
-  if (cov(2) > 0.25) {
+  
+  // TODO 这里判断奇异值的目的
+  std::cout << "cov() "<< cov.transpose() << std::endl;
+  // if (cov(2) > 0.03) {
+  // if (cov(2) > 0.12) {
+  if (cov(2) > 0.2) {
     q_ItoS_est_ = q_ItoS_est;
     rotaion_initialized_ = true;
     return true;

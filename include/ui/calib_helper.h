@@ -27,7 +27,7 @@
 #include <utils/dataset_reader.h>
 #include <core/scan_undistortion.h>
 
-//the following are UBUNTU/LINUX ONLY terminal color codes.
+// the following are UBUNTU/LINUX ONLY terminal color codes.
 #define RESET   "\033[0m"
 #define BLACK   "\033[30m"      /* Black */
 #define RED     "\033[31m"      /* Red */
@@ -71,6 +71,7 @@ public:
 protected:
 
   void Mapping(bool relocalization = false);
+  void DebugPointCloud();
 
   /// dataset
   std::string cache_path_;
@@ -83,9 +84,9 @@ protected:
   bool opt_time_offset_;
 
   /// lidar odometry
-  double map_time_;
+  double map_time_;                       // lidar与imu有效数据的起始时间
   double ndt_resolution_;
-  double scan4map_time_;
+  double scan4map_time_;                  // = map_time_ + scan4map;
 
   /// data association
   double associated_radius_;

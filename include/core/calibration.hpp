@@ -38,17 +38,18 @@ public:
   typedef std::shared_ptr<CalibParamManager> Ptr;
 
   CalibParamManager() :
-          p_LinI(Eigen::Vector3d(0,0,0)) ,
+          p_LinI(Eigen::Vector3d(0,0.1,0.7)) ,            // 在这里给外参中的平移赋予初始值
           q_LtoI(Eigen::Quaterniond::Identity()),
           gravity(Eigen::Vector3d(0, 0, -9.8)),
           time_offset(0),
           gyro_bias(Eigen::Vector3d(0,0,0)),
           acce_bias(Eigen::Vector3d(0,0,0)) {
-
+    
+    //? 加速度计、陀螺仪与雷达的噪声强度
     double gyroscope_noise_density = 1.745e-4;
     double accelerometer_noise_density = 5.88e-4;
-    double imu_rate = 400.0;
     double lidar_noise = 0.02;
+    double imu_rate = 100.0;
 
     double gyro_discrete = gyroscope_noise_density * std::sqrt(imu_rate);
     double acce_discrete = accelerometer_noise_density * std::sqrt(imu_rate);
@@ -57,7 +58,7 @@ public:
     global_opt_acce_weight = 1.0 / std::pow(acce_discrete, 2);  // 7.23e3
     global_opt_lidar_weight = 1.0 / std::pow(lidar_noise, 2);   // 2.5e3
 
-    // fine-tuned parameter
+    //? fine-tuned parameter，根据什么设定的
     global_opt_gyro_weight = 28.0;
     global_opt_acce_weight = 18.5;
     global_opt_lidar_weight = 10.0;
@@ -87,7 +88,12 @@ public:
     acce_bias = ab;
   }
 
+  /**
+   * @brief 标定结果输出函数
+   * 
+   */
   void showStates() const {
+    // IMU坐标系下Lidar的旋转
     Eigen::Vector3d euler_LtoI = q_LtoI.toRotationMatrix().eulerAngles(0,1,2);
     euler_LtoI = euler_LtoI * 180 / M_PI;
 
@@ -105,12 +111,19 @@ public:
     std::cout << "acce bias   : " << acce_bias.transpose() << std::endl;
     std::cout << "gyro bias   : " << gyro_bias.transpose() << std::endl;
   }
-
+    
+  /**
+   * @brief 保存标定结果
+   * 
+   * @param filename 输出结果保存文件目录
+   * @param info 输出结果的表头信息
+   */
   void save_result(const std::string& filename, const std::string& info) const {
     Eigen::Quaterniond q_ItoL = q_LtoI.inverse();
     Eigen::Vector3d p_IinL = q_ItoL * (-p_LinI);
 
     std::ofstream outfile;
+    // 在文本后面追加
     outfile.open(filename, std::ios::app);
     outfile << info << ","
             << p_IinL(0) << "," << p_IinL(1) << "," << p_IinL(2) << ","
@@ -122,10 +135,11 @@ public:
   }
 
 public:
+  // lidar_2_Imu的平移
   Eigen::Vector3d p_LinI;
-
+  // ldiar_2_Imu的旋转
   Eigen::Quaterniond q_LtoI;
-
+  //? 哪个坐标系下的重力矢量
   Eigen::Vector3d gravity;
 
   double time_offset;
@@ -134,7 +148,7 @@ public:
 
   Eigen::Vector3d acce_bias;
 
-  ///weight
+  // weight
   double global_opt_gyro_weight;
 
   double global_opt_acce_weight;

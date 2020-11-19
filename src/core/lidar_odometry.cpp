@@ -42,6 +42,14 @@ LiDAROdometry::ndtInit(double ndt_resolution) {
   return ndt_omp;
 }
 
+/**
+ * @brief 每次添加一帧就做一次NDT变换，以第一帧Lidar为参考坐标系
+ * 
+ * @param timestamp 当前帧点云的时间戳(s)
+ * @param cur_scan 当前帧点云
+ * @param pose_predict 位姿的初始值(当前帧相对于上一帧)
+ * @param update_map 是否更新source点云
+ */
 void LiDAROdometry::feedScan(double timestamp,
                              VPointCloud::Ptr cur_scan,
                              Eigen::Matrix4d pose_predict,
@@ -64,19 +72,35 @@ void LiDAROdometry::feedScan(double timestamp,
   }
 }
 
+/**
+ * @brief NDT点云匹配接口函数，将cur_scan向scan_in_target对齐
+ * 
+ * @param cur_scan 当前帧点云(输入点云)
+ * @param pose_predict 当前帧点云的预测位姿(相对于scan_in_target点云)
+ * @param pose_out 点云的位姿结果(输入点云相对于scan_in_targer点云)
+ * @param scan_in_target 
+ */
 void LiDAROdometry::registration(const VPointCloud::Ptr& cur_scan,
                                  const Eigen::Matrix4d& pose_predict,
                                  Eigen::Matrix4d& pose_out,
                                  VPointCloud::Ptr scan_in_target) {
   VPointCloud::Ptr p_filtered_cloud(new VPointCloud());
   downsampleCloud(cur_scan, p_filtered_cloud, 0.5);
-
+  
+  // 设定Source点云(the point cloud that we want to align to the target)
   ndt_omp_->setInputSource(p_filtered_cloud);
+  // 将Source点云向Target点云对齐
   ndt_omp_->align(*scan_in_target, pose_predict.cast<float>());
-
+  // 获取相对位姿
   pose_out = ndt_omp_->getFinalTransformation().cast<double>();
 }
 
+/**
+ * @brief 更新NDT配准时的Target点云
+ * 
+ * @param cur_scan 当前帧点云
+ * @param odom_data 当前帧相对于初始帧的位姿
+ */
 void LiDAROdometry::updateKeyScan(const VPointCloud::Ptr& cur_scan,
                                   const OdomData& odom_data) {
   if (checkKeyScan(odom_data)) {
@@ -93,11 +117,19 @@ void LiDAROdometry::updateKeyScan(const VPointCloud::Ptr& cur_scan,
   }
 }
 
+/**
+ * @brief 检查当前帧是否是关键帧(只根据当前帧的位姿确定)
+ * 
+ * @param odom_data 当前帧的位姿
+ * @return true 是关键帧
+ * @return false 不是关键帧
+ */
 bool LiDAROdometry::checkKeyScan(const OdomData& odom_data) {
   static Eigen::Vector3d position_last(0,0,0);
   static Eigen::Vector3d ypr_last(0,0,0);
 
   Eigen::Vector3d position_now = odom_data.pose.block<3,1>(0,3);
+  // 连续两帧之间平移的二范数
   double dist = (position_now - position_last).norm();
 
   const Eigen::Matrix3d rotation (odom_data.pose.block<3,3> (0,0));
@@ -105,6 +137,7 @@ bool LiDAROdometry::checkKeyScan(const OdomData& odom_data) {
   Eigen::Vector3d delta_angle = ypr - ypr_last;
   for (size_t i = 0; i < 3; i++)
     delta_angle(i) = normalize_angle(delta_angle(i));
+  // Eigen内置了一些对矩阵元素操作的函数，均以cwise开头
   delta_angle = delta_angle.cwiseAbs();
 
   if (key_frame_index_.size() == 0 || dist > 0.2

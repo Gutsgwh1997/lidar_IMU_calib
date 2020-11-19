@@ -21,6 +21,8 @@
 #ifndef VELODYNE_CORRECTION_HPP
 #define VELODYNE_CORRECTION_HPP
 
+#include <cmath>
+#include <pcl-1.7/pcl/common/io.h>
 #include <ros/ros.h>
 #include <velodyne_msgs/VelodynePacket.h>
 #include <velodyne_msgs/VelodyneScan.h>
@@ -48,8 +50,8 @@ public:
     setParameters(m_modelType);
   }
 
-  void unpack_scan(const velodyne_msgs::VelodyneScan::ConstPtr &lidarMsg,
-                   TPointCloud &outPointCloud) const {
+  void unpack_scan(const velodyne_msgs::VelodyneScan::ConstPtr &lidarMsg, 
+          TPointCloud &outPointCloud) const {
     outPointCloud.clear();
     outPointCloud.header = pcl_conversions::toPCL(lidarMsg->header);
     if (m_modelType == ModelType::VLP_16) {
@@ -87,6 +89,7 @@ public:
 
         for (int firing=0, k=0; firing < FIRINGS_PER_BLOCK; firing++) {
           for (int dsr=0; dsr < SCANS_PER_FIRING; dsr++, k += RAW_SCAN_SIZE) {
+              static size_t count = 0;
 
             /** Position Calculation */
             union two_bytes tmp;
@@ -139,18 +142,56 @@ public:
                 point.z = NAN;
                 point.intensity = 0;
               }
-              if(m_modelType == ModelType::VLP_16)
-                outPointCloud.at(2*block_counter+firing, scan_mapping_16[dsr]) = point;
+              if (m_modelType == ModelType::VLP_16) {
+                  // 有序的方式存储
+                  outPointCloud.at(2 * block_counter + firing, scan_mapping_16[dsr]) = point;
+              }
             }
           }
         }
       }
     }
+
+
+    /****
+    {
+        TPointCloud myPointCloud;
+        myPointCloud.width = outPointCloud.width;
+        myPointCloud.height = outPointCloud.height;
+        myPointCloud.is_dense = false;
+
+        int size = myPointCloud.width * myPointCloud.height;
+        myPointCloud.resize(size);
+        int count = 0;
+        for (int w = 0; w < myPointCloud.width; ++w) {
+            for (int h = 0; h < myPointCloud.height; ++h) {
+                myPointCloud.points[count].x = outPointCloud.at(w, h).x;
+                myPointCloud.points[count].y = outPointCloud.at(w, h).y;
+                myPointCloud.points[count].z = outPointCloud.at(w, h).z;
+                myPointCloud.points[count].intensity = outPointCloud.at(w, h).intensity;
+                myPointCloud.points[count].timestamp = outPointCloud.at(w, h).timestamp;
+                ++count;
+            }
+        }
+
+        for (int w = 0; w < myPointCloud.width; ++w) {
+            for (int h = 0; h < myPointCloud.height; ++h) {
+                outPointCloud.at(w, h).x = myPointCloud.at(w, h).x;
+                outPointCloud.at(w, h).y = myPointCloud.at(w, h).y;
+                outPointCloud.at(w, h).z = myPointCloud.at(w, h).z;
+                outPointCloud.at(w, h).intensity = myPointCloud.at(w, h).intensity;
+                outPointCloud.at(w, h).timestamp = myPointCloud.at(w, h).timestamp;
+            }
+        }
+    }
+    *****/
+
   }
 
 
   void unpack_scan(const sensor_msgs::PointCloud2::ConstPtr &lidarMsg,
                    TPointCloud &outPointCloud) const {
+    // VPointCloud是XYZI类型的标准点云
     VPointCloud temp_pc;
     pcl::fromROSMsg(*lidarMsg, temp_pc);
 
@@ -161,6 +202,7 @@ public:
     outPointCloud.is_dense = false;
     outPointCloud.resize(outPointCloud.height * outPointCloud.width);
 
+    // 这个是第一个激光点的时间戳
     double timebase = lidarMsg->header.stamp.toSec();
     for (int h = 0; h < temp_pc.height; h++) {
       for (int w = 0; w < temp_pc.width; w++) {
@@ -246,6 +288,15 @@ private:
           mVLP16TimeBlock[w][h] = h * 2.304 * 1e-6 + w * 55.296 * 1e-6; /// VLP_16 16*1824
         }
       }
+
+      //! 这里的时间偏移量单位是s
+      double RsLidar32Block[1700][32];
+      for(unsigned int w = 0; w < 1700; w++){
+          for(unsigned int h = 0; h < 32; h++){
+              RsLidar32Block[w][h] = (55.52 * w + 2.88 * (h % 16) + 1.44 * std::floor((h + 1)/16)) * 1e-6;
+          }
+      }
+
     }
   }
 

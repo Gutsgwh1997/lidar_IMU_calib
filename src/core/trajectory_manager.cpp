@@ -39,24 +39,32 @@ void TrajectoryManager::feedIMUData(const IO::IMUData& data) {
   imu_data_.emplace_back(data);
 }
 
+/**
+ * @brief 根据陀螺仪的测量值进行旋转轨迹的插值
+ * 
+ */
 void TrajectoryManager::initialSO3TrajWithGyro() {
   assert(imu_data_.size() > 0 &&
          "[initialSO3TrajWithGyro]: There's NO imu data for initialization.");
+  // quaternion in cubic B-splines，轨迹和
   std::shared_ptr<SO3TrajEstimator> estimator_SO3;
   estimator_SO3 = std::make_shared<SO3TrajEstimator>(traj_->SO3Spline());
 
+  // 向estimator中添加约束(将本类中保存的所有IMU观测添加为约束)
   addGyroscopeMeasurements(estimator_SO3);
 
-  /// fix the initial pose of trajectory
+  // fix the initial pose of trajectory(这个MinTime()要小于IMU的所有观测的)
   double weight_t0 = calib_param_manager->global_opt_gyro_weight;
   double t0 = traj_->SO3Spline()->MinTime();
-  //Eigen::Quaterniond q0 = Eigen::Quaterniond::Identity();
+  // Eigen::Quaterniond q0 = Eigen::Quaterniond::Identity();
   Eigen::AngleAxisd rotation_vector(0.0001, Eigen::Vector3d(0,0,1));
   Eigen::Quaterniond q0 = Eigen::Quaterniond (rotation_vector.matrix());
   auto m_q0 = std::make_shared<OrientationMeasurement>(t0, q0, weight_t0);
   estimator_SO3->AddMeasurement<OrientationMeasurement>(m_q0);
 
-  ceres::Solver::Summary summary = estimator_SO3->Solve(30, false);
+  //? 迭代30次，关闭stdout，2个线程，这一步是计算控制点？
+  ceres::Solver::Summary summary = estimator_SO3->Solve(30, false, 2);
+  std::cout<<"TrajectoryManager::initialSO3TrajWithGyro Finished! "<< std::endl;
   std::cout << summary.BriefReport() << std::endl;
 }
 
@@ -109,6 +117,15 @@ bool TrajectoryManager::evaluateIMUPose(double imu_time, int flags,
   return true;
 }
 
+/**
+ * @brief 从样条曲线获得lidar_time时刻Lidar相对于初始时刻的姿态
+ * 
+ * @param lidar_time 想要获取姿态的时刻
+ * @param q_LtoG 得到的旋转项(四元数)
+ * @param p_LinG 得到的平移项(平移向量)
+ * @return true 成功get到结果
+ * @return false 未成功get到结果
+ */
 bool TrajectoryManager::evaluateLidarPose(double lidar_time,
                                           Eigen::Quaterniond &q_LtoG,
                                           Eigen::Vector3d &p_LinG) const {
@@ -140,19 +157,29 @@ bool TrajectoryManager::evaluateLidarRelativeRotation(double lidar_time1,
   return true;
 }
 
+/**
+ * @brief 向estimator中添加约束(将本类中保存的所有IMU观测添加为约束)
+ * 
+ * @tparam TrajectoryModel Estimator的类型
+ * @param estimator 
+ */
 template <typename TrajectoryModel>
 void TrajectoryManager::addGyroscopeMeasurements(
         std::shared_ptr<kontiki::TrajectoryEstimator<TrajectoryModel>> estimator) {
+  // 陀螺仪测量缓存
   gyro_list_.clear();
-
+  
+  // 这个weight是在calibration.hpp中手工设定的
   double weight = calib_param_manager->global_opt_gyro_weight;
   const double min_time = estimator->trajectory()->MinTime();
   const double max_time = estimator->trajectory()->MaxTime();
-
+  
+  // 
   for (const auto &v : imu_data_) {
     if ( min_time > v.timestamp || max_time <= v.timestamp) {
       continue;
     }
+    // 构造陀螺仪的测量(需要经过imu_ sensor)
     auto mg = std::make_shared<GyroMeasurement>(imu_, v.timestamp, v.gyro, weight);
     gyro_list_.push_back(mg);
     estimator->template AddMeasurement<GyroMeasurement>(mg);

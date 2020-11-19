@@ -36,9 +36,15 @@ public:
 
   struct OdomData {
     double timestamp;
-    Eigen::Matrix4d pose; // cur scan to first scan
+    // cur scan to first scan
+    Eigen::Matrix4d pose; 
   };
-
+  
+  /**
+   * @brief Construct a new LiDAR Odometry object
+   * 
+   * @param ndtResolution 
+   */
   explicit LiDAROdometry(double ndtResolution = 0.5);
 
   static pclomp::NormalDistributionsTransform<VPoint, VPoint>::Ptr ndtInit(
@@ -97,8 +103,10 @@ private:
   VPointCloud::Ptr map_cloud_;
 
   pclomp::NormalDistributionsTransform<VPoint, VPoint>::Ptr ndt_omp_;
-
+  
+  // key_frame_index_中第i个关键帧的位姿对应于odom_data_[key_frame_index_[i] -1]
   std::vector<size_t> key_frame_index_;
+  // 所有Lidar帧的位姿结果(相对于第一个lidar帧)
   Eigen::aligned_vector<OdomData> odom_data_;
 };
 

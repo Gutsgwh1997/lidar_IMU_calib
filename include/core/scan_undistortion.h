@@ -37,18 +37,26 @@ public:
                               dataset_reader_(std::move(dataset)) {
   }
 
+  /**
+   * @brief 点云畸变补偿(去除所有dataset_reader_中点云的畸变)
+   * 
+   * @param correct_position 是否去除平移部分的畸变
+   */
   void undistortScan(bool correct_position = false) {
     scan_data_.clear();
 
+    // 带有时间戳的点云数据
     for (const TPointCloud& scan_raw: dataset_reader_->get_scan_data()) {
       Eigen::Quaterniond q_L0_to_G;
       Eigen::Vector3d p_L0_in_G;
+      
+      // 从B样条中获取lidar点云时刻的姿态
       double scan_timestamp = pcl_conversions::fromPCL(scan_raw.header.stamp).toSec();
       if (!traj_manager_->evaluateLidarPose(scan_timestamp, q_L0_to_G, p_L0_in_G)) {
         std::cout << "[ScanUndistortion] : pass " << scan_timestamp << std::endl;
         continue;
       }
-
+      
       VPointCloud::Ptr scan_in_target(new VPointCloud);
       undistort(q_L0_to_G.conjugate(), p_L0_in_G, scan_raw,
                 scan_in_target, correct_position);
@@ -103,7 +111,16 @@ public:
   }
 
 private:
-
+  
+  /**
+   * @brief 真正实现点云畸变去除的函数，去除
+   * 
+   * @param q_G_to_target 初始时刻到lidar的旋转
+   * @param p_target_in_G lidar相对于初始时刻的平移
+   * @param scan_raw 原始点云(需要去除畸变的点云)，带有每个激光点的时间戳
+   * @param scan_in_target 去除畸变后的点云(指针)，XYZI类型的数据
+   * @param correct_position (是否去除平移项的畸变)
+   */
   void undistort(const Eigen::Quaterniond& q_G_to_target,
                  const Eigen::Vector3d& p_target_in_G,
                  const TPointCloud& scan_raw,
@@ -131,13 +148,14 @@ private:
         if (!traj_manager_->evaluateLidarPose(point_timestamp, q_Lk_to_G, p_Lk_in_G)) {
           continue;
         }
+        // 当前激光点相对于点云时间戳处的旋转变换
         Eigen::Quaterniond q_LktoL0 = q_G_to_target * q_Lk_to_G;
         Eigen::Vector3d p_Lk(scan_raw.at(w,h).x, scan_raw.at(w,h).y, scan_raw.at(w,h).z);
 
         Eigen::Vector3d point_out;
-        if (!correct_position) {
+        if (!correct_position) {         /// 只补偿旋转畸变
           point_out = q_LktoL0 * p_Lk;
-        } else {
+        } else {                        /// 补偿旋转和平移的畸变
           point_out = q_LktoL0 * p_Lk + q_G_to_target * (p_Lk_in_G - p_target_in_G);
         }
 
@@ -150,9 +168,11 @@ private:
     }
   }
 
+  // 从构造函数中获取的 
   TrajectoryManager::Ptr traj_manager_;
   std::shared_ptr<IO::LioDataset> dataset_reader_;
-
+  
+  // 此类构造出来的结果
   std::map<pcl::uint64_t, VPointCloud::Ptr> scan_data_;
   std::map<pcl::uint64_t, VPointCloud::Ptr> scan_data_in_map_;
   VPointCloud::Ptr map_cloud_;

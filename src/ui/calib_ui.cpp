@@ -54,14 +54,16 @@ CalibInterface::CalibInterface(ros::NodeHandle& nh) :
       pangolin_colors_.emplace_back(cw.GetUniqueColour());
     }
   } else {
+    // 1.初始化阶段，对应论文中的A. Initialization of Extrinsic Rotation
     Initialization();
 
     DataAssociation();
 
     BatchOptimization();
 
-    for (size_t iter = 0; iter < 7; iter++)
+    for (size_t iter = 0; iter < 7; iter++){
       Refinement();
+    }
 
     opt_time_offset_ = true;
     Refinement();
